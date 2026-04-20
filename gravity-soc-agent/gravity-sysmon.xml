@@ -1,0 +1,91 @@
+<Sysmon schemaversion="4.90">
+  <!-- HashAlgorithms: Obligamos a que el Evento 1 devuelva SOLO SHA256 -->
+  <HashAlgorithms>SHA256</HashAlgorithms>
+
+  <EventFiltering>
+    <!-- EVENT ID 1: Process Creation -->
+    <!-- Por defecto captura TODO, excluyendo el ruido base -->
+    <ProcessCreate onmatch="exclude">
+      <Image condition="is">C:\Windows\System32\conhost.exe</Image>
+      <Image condition="is">C:\Windows\System32\svchost.exe</Image>
+      <Image condition="begin with">C:\Program Files\Windows Defender\</Image>
+      <Image condition="begin with">C:\ProgramData\Microsoft\Windows Defender\</Image>
+      <!-- Puedes añadir aquí tu software de confianza pesado si satura los logs -->
+    </ProcessCreate>
+
+    <!-- EVENT ID 3: Network Connection -->
+    <!-- Captura toda conexión, pero descartamos navegadores y loopback para ahorrar CPU -->
+    <NetworkConnect onmatch="exclude">
+      <Image condition="end with">chrome.exe</Image>
+      <Image condition="end with">firefox.exe</Image>
+      <Image condition="end with">msedge.exe</Image>
+      <Image condition="end with">brave.exe</Image>
+      <Image condition="begin with">C:\Program Files\Windows Defender\</Image>
+
+      <!-- Descartamos tráfico interno básico de la propia máquina -->
+      <DestinationIp condition="is">127.0.0.1</DestinationIp>
+      <DestinationIp condition="is">0:0:0:0:0:0:0:1</DestinationIp>
+      <DestinationIp condition="is">::1</DestinationIp>
+    </NetworkConnect>
+
+    <!-- EVENT ID 22: DNS Query -->
+    <DnsQuery onmatch="exclude">
+      <!-- Descartamos telemetría intrínseca y navegación web normal -->
+      <QueryName condition="end with">.microsoft.com</QueryName>
+      <QueryName condition="end with">.windowsupdate.com</QueryName>
+      <QueryName condition="end with">.azure.com</QueryName>
+      <QueryName condition="end with">.msn.com</QueryName>
+      <QueryName condition="end with">.bing.com</QueryName>
+      <QueryName condition="is">localhost</QueryName>
+      <Image condition="end with">chrome.exe</Image>
+      <Image condition="end with">firefox.exe</Image>
+      <Image condition="end with">msedge.exe</Image>
+      <Image condition="begin with">C:\Program Files\Windows Defender\</Image>
+    </DnsQuery>
+
+    <!-- EVENT ID 8: CreateRemoteThread -->
+    <CreateRemoteThread onmatch="exclude" />
+
+    <!-- EVENT ID 11: FileCreate -->
+    <FileCreate onmatch="exclude">
+      <!-- Excluir ruido masivo de creación de archivos si es necesario -->
+      <Image condition="begin with">C:\Program Files\Windows Defender\</Image>
+    </FileCreate>
+
+    <!-- EVENT IDs 12, 13, 14: RegistryEvent -->
+    <RegistryEvent onmatch="exclude">
+      <Image condition="is">C:\Windows\System32\svchost.exe</Image>
+    </RegistryEvent>
+
+    <!-- INACTIVAR EVENTOS INNECESARIOS -->
+    <!-- Al configurar en 'include' vacío, estos eventos jamás generarán logs en Windows -->
+    <FileCreateTime onmatch="include" />
+    <!-- ID 2 -->
+    <ProcessTerminate onmatch="include" />
+    <!-- ID 5 -->
+    <DriverLoad onmatch="include" />
+    <!-- ID 6 -->
+    <ImageLoad onmatch="include" />
+    <!-- ID 7 -->
+    <RawAccessRead onmatch="include" />
+    <!-- ID 9 -->
+    <ProcessAccess onmatch="include" />
+    <!-- ID 10 -->
+    <FileCreateStreamHash onmatch="include" />
+    <!-- ID 15 -->
+    <PipeEvent onmatch="include" />
+    <!-- IDs 17, 18 -->
+    <WmiEvent onmatch="include" />
+    <!-- IDs 19, 20, 21 -->
+    <FileDelete onmatch="include" />
+    <!-- IDs 23, 26 -->
+    <ClipboardChange onmatch="include" />
+    <!-- ID 24 -->
+    <ProcessTampering onmatch="include" />
+    <!-- ID 25 -->
+    <FileBlockExecutable onmatch="include" />
+    <!-- ID 27 -->
+    <FileBlockShredding onmatch="include" />
+    <!-- ID 28 -->
+  </EventFiltering>
+</Sysmon>
