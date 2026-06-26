@@ -17,10 +17,8 @@ import (
 // despilfarre ciclos compilando el patrón en cada nueva línea del log. Son ultra-rápidas.
 
 // unboundRegex busca patrones estándar: info: 192.168.1.50 example.com. A IN
-var unboundRegex = regexp.MustCompile(`(?i)(?:info:\s+)?(\d{1,3}(?:\.\d{1,3}){3})\s+([a-zA-Z0-9._-]+?)\.?\s+([A-Z0-9]+)\s+IN`)
-
-// dnsSpyRegex busca una hipotética estructura de alerta: DNS_ALERT: Client: 192.168.1.50 -> malicious.com (A)
-var dnsSpyRegex = regexp.MustCompile(`(?i)DNS_ALERT.*?(\d{1,3}(?:\.\d{1,3}){3}).*?([a-zA-Z0-9._-]+).*?(A|AAAA|TXT|CNAME|PTR|MX|SRV|HTTPS|ANY)`)
+var unboundRegex = regexp.MustCompile(`(?i)(?:info:\s+)?([0-9a-fA-F:.]+)\s+([a-zA-Z0-9._-]+?)\.?\s+([A-Z0-9]+)\s+IN`)
+var dnsSpyRegex = regexp.MustCompile(`(?i)DNS_ALERT.*?([0-9a-fA-F:.]+).*?([a-zA-Z0-9._-]+).*?(A|AAAA|TXT|CNAME|PTR|MX|SRV|HTTPS|ANY)`)
 
 // StartUnboundTailer lee un archivo de log línea a línea sin bloquear y emite structs JSON
 func StartUnboundTailer(ctx context.Context, filepath string, outChan chan<- models.Event) {

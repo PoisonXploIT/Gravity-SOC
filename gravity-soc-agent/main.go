@@ -101,7 +101,8 @@ func main() {
 	// Lanzar Sender para enviar a la Pi 5 en L2
 	pi5ServerURL := os.Getenv("GRAVITY_SERVER_URL")
 	if pi5ServerURL == "" {
-		pi5ServerURL = "http://192.168.1.100:8443/api/v1/events"
+		log.Println("[WARNING] GRAVITY_SERVER_URL no configurada. Usando http://127.0.0.1:8443/api/v1/events")
+		pi5ServerURL = "http://127.0.0.1:8443/api/v1/events"
 	}
 	go sender.StartHTTPSender(ctx, pi5ServerURL, eventsChan)
 

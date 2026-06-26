@@ -9,7 +9,7 @@ import (
 
 	"gravity-soc-server/db"
 
-	"github.com/jung-kurt/gofpdf"
+	"github.com/go-pdf/fpdf"
 )
 
 // GenerateDailyReport extrae datos de la BD y crea un informe PDF en /reports/
@@ -43,7 +43,7 @@ func GenerateDailyReport() (string, error) {
 	filePath := filepath.Join(reportsDir, fileName)
 
 	// 3. Crear PDF
-	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
 	
 	// Título / Cabecera

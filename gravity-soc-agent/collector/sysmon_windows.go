@@ -94,7 +94,7 @@ func parseSysmonEvent(se SysmonEvent, outChan chan<- models.Event, hostname stri
 		}
 	case 8: // Create Remote Thread
 		event.EventType = "create_remote_thread"
-		event.Severity = "high" // PoisonXploIT suele inyectar memoria
+		event.Severity = "high" // Remote thread injection is high-risk behavior
 		event.Process = models.Process{
 			Name:        dataMap["SourceImage"],
 			ProcessGuid: dataMap["SourceProcessGuid"],
@@ -272,10 +272,12 @@ func startRealSysmonCollector(ctx context.Context, outChan chan<- models.Event) 
 					// Guardar marcador de progreso y emitir al pipeline principal
 					lastRecordID = se.System.EventRecordID
 					
-					// Escribir a checkpoint file de manera ofuscada/ligera
-					buf := make([]byte, 4)
-					binary.LittleEndian.PutUint32(buf, uint32(lastRecordID))
-					_ = os.WriteFile(checkpointFile, buf, 0644)
+					// Escribir checkpoint de forma atomica (temp + rename)
+						buf := make([]byte, 4)
+						binary.LittleEndian.PutUint32(buf, uint32(lastRecordID))
+						tmpFile := checkpointFile + ".tmp"
+						_ = os.WriteFile(tmpFile, buf, 0644)
+						_ = os.Rename(tmpFile, checkpointFile)
 					
 					parseSysmonEvent(se, outChan, hostname)
 				}

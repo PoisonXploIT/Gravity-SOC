@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"gravity-soc-agent/models"
@@ -44,6 +45,9 @@ func StartHTTPSender(ctx context.Context, serverURL string, inChan <-chan models
 					break // Error irrecuperable de creación de petición, descartar
 				}
 				req.Header.Set("Content-Type", "application/json")
+				if apiKey := os.Getenv("GRAVITY_API_KEY"); apiKey != "" {
+					req.Header.Set("X-API-Key", apiKey)
+				}
 
 				resp, err := client.Do(req)
 				if err != nil {

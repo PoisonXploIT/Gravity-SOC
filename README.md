@@ -2,93 +2,257 @@
 
 Lightweight distributed SOC platform in Go. Client-server architecture for real-time security monitoring and incident response.
 
-![Go](https://img.shields.io/badge/Go-%3E%3D1.22-00ADD8?style=flat&logo=go) ![License](https://img.shields.io/badge/License-MIT-green) ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20ARM-blue)
+![Go](https://img.shields.io/badge/Go-%3E%3D1.22-00ADD8?style=flat&logo=go)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20ARM-blue)
 
 Centro de Operaciones de Seguridad (SOC) distribuido, ligero y asimetrico.
 
-## 1. Arquitectura General
+## Arquitectura
 
-Gravity SOC opera basado en un esquema cliente-servidor de L2/L1, disenado bajo la premisa del minimo consumo y el paso de variables ultra-rapido en memoria, huyendo todo lo posible de la compilacion cruzada dependiente de lenguajes como C (CGO).
-
-Se compone de **dos repositorios o modulos principales**:
-
-### A. Gravity SOC Agent (Capa L1 - Sensores)
-El agente de Gravity SOC es un ejecutable polimorfico escrito en `Go` que se adapta silenciosamente al sistema operativo en el que se despliega.
-- **Windows (Host L1)**: Se engancha limpiamente al registro de Windows y abstrae toda la logica compleja de interconectarse a los registros `ETW (Event Tracing for Windows)`. Aprovechando `wevtutil`, el agente lee de forma ciclica e inversa los eventos generados por Sysmon (Sysinternals) esquivando binarios incompatibles en el runtime de Go. Especializado en capturar:
-  - Creacion de procesos y comandos (`EventID: 1`).
-  - Conexiones de red internas y a dominios exteriores (`EventID: 3`).
-  - Mutaciones en el sistema / Inyecciones de memoria remotas (`EventID: 8`).
-  - Lecturas sobre archivos de gran peso / Registro de DNS del host.
-- **Linux (Network L1 / Raspberry Pi Zero 2 W)**: Desempenando el papel de centinela silencioso dentro de la red corporativa/casera, el agente intercepta logs volatiles de un servidor DNS local (como Unbound) que expone las resoluciones. Si un dispositivo intenta buscar un "malicious.com" (ya este camuflado, ya sea una rafaga o una botnet), el agente captura el paquete instantaneamente apoyado por su lectura asincrona robusta.
-
-**Envio Resiliente:** Ambos agentes emplean un bus de eventos (Memory Channel), limitando la huella RAM a no mas de 1000 eventos retenidos en simultaneo. Un emisor en forma de bucle enviara mediante peticiones `POST` cifradas todos los eventos, dotado de reintentos exponenciales automaticos de hasta 1 minuto para prevenir congelacion o caida general del servidor (L2).
-
-### B. Gravity SOC Server (Capa L2 - Cerebro y Correlador)
-Desplegado tipicamente en un sistema algo mayor (como una Raspberry Pi 5 o servidor local), el "Cerebro" ingiere la telemetria continua de todos los L1 de la red.
-- **Motor SQLite**: Usando configuraciones PRAGMA exclusivas para rendimiento transaccional (`WAL` y `Synchronous = NORMAL`), mantiene el record historico en una base de datos de disco local capaz de tolerar flujos muy violentos de escritura con *locks* minimos.
-- **Correlacion Real en Segundos**: Usa consultas matematicas cruzadas en tiempo real para emparejar piezas aisladas. Un `dns_alert` captado por el router y un `network_dns` generado por Sysmon en Windows se unen por su nombre de dominio y linea temporal (delta maximo de ~10 segundos) evidenciando "que maquina de la red fue la que causo el disparo general".
-- **Generador de Reportes en PDF**: Diariamente genera y renderiza de forma autonoma (apoyado en el paquete *GoFPDF*) informes ejecutivos y tabulados en un archivo plano en la carpeta `/reports/` informando de la jornada (ingestas globales y emparejamientos confirmados).
-
----
-
-## 2. Historial de Crisis y Evolucion Tecnologica (Wall of Bugs)
-
-Durante la fase intensiva de despliegue real en ecosistemas Windows y pruebas cruzadas, detectamos problemas criticos en el manejo y fiabilidad del agente debido a la naturaleza brutal de la API de Windows, lo que forzo diversas iteraciones de diseno:
-
-1. **El Asesino del UTF-16 (Sysmon Windows XML)**: Los shells y el `Event Log API` nativa de Windows soltaban ocasionalmente basura *little-endian* a 16-bits (o nulos `0x00` inyectados). Para solucionarlo, el agente integro uno de los *handlers* mas limpios y destructivos del entorno **(Filtro de Aniquilacion de Lista Blanca)** que destripa radicalmente y reconstruye todo bytes en un `UTF-8` validado matematicamente.
-2. **Crash de Conexion de Capa 1 y Freeze Local**: Se descubrieron caidas completas del Agente al ser incapaz de contactar al servidor, llenando el bus de memoria e imposibilitando las lecturas a `wevtutil`. El agente fue mutado y todos los procesos se modificaron al estandar "cero-bloqueos" de Go (`select/default`), reventando o ignorando eventos sobrantes para jamas comprometer el estado funcional de la maquina anfitriona.
-3. **Ghost Hostnames (Filtracion de la Interfaz)**: Variables y marcadores en crudo (`os.Open` con memory leaks) obligaron a abstraer el calculo del agente `AgentID` mediante cacheado persistente antes del *Runtime*, salvando file handles. Se aplico el uso guardado en memoria disco con un pseudo-cache (`.gravity-checkpoint`) para sobrevivir a los reinicios de Windows sin re-lanzar un aluvion de alertas viejas.
-4. **Resiliencia SQL (Cerebro Ciego)**: Al realizar la comparativa SQL para cruzar los eventos en la mesa de correlacion (Agente Network VS Agente Windows), `database/sql` de Go sufria silenciosas paradas cardiacas debido a celdas SQLite desiertas (`NULL`). Fue subsanado empleando `TrimSpace`, `COALESCE` en inyeccion pura por SQL, relax de las metricas zonales y variables independientes por agente.
-
----
-
-## 3. Pasos de Despliegue y Ejecucion
-
-*Es requisito contar con `Go >= 1.22` y acceso a administrador para enganchar a disco y redes si deseas ejecutar los binarios.*
-
-### Compilar y Arrancar el Agente (Terminal Autorizada)
-```bash
-# Entrar a la carpeta del Agente
-cd gravity-soc-agent
-
-# Descargar modulos necesarios
-go mod tidy 
-
-# 1. COMPILAR LINUX (Sensor PI)
-$env:GOOS="linux"; $env:GOARCH="arm"  # (o "arm64" dependiendo de kernel)
-go build -o gravity-agent-linux
-
-# 2. COMPILAR WINDOWS (Endpoint)
-$env:GOOS="windows"; $env:GOARCH="amd64"
-go build -o gravity-agent.exe
-
-# Ejecutar Agent Win (En Powershell/CMD de Admin)
-.\gravity-agent.exe
+```
+                          Gravity SOC Server (L2)
+                          ========================
+                          - SQLite WAL (events + correlations)
+                          - Motor de correlacion en memoria
+                          - Watchdog de sensores
+                          - Retencion nocturna automatica
+                          - API REST + Reportes PDF
+                          - Deployable en Docker
+                          |
+              +-----------+-----------+
+              |                       |
+     Agent L1 (Windows)        Agent L1 (Linux/Pi)
+     ==================        ==================
+     - Sysmon EventLog         - DNS log tailer
+     - wevtutil polling        - Unbound / DNS-spy
+     - EventIDs 1,3,8,11,      - Regex IPv4 + IPv6
+       12,13,22                - Alertas DNS
+     - Checkpoint atomico      - Backoff exponencial
+     - API key auth            - API key auth
+              |                       |
+              +-----------+-----------+
+                          |
+                    HTTP POST + JSON
+                    X-API-Key header
 ```
 
-### Compilar y Arrancar el Servidor L2
+## Roles de cada componente
+
+### Agent L1 - Windows (Endpoint Sensor)
+
+| Rol | Descripcion |
+|-----|-------------|
+| Sensor de host | Lee eventos de Sysmon via `wevtutil` (sin CGO) |
+| EventIDs cubiertos | 1 (process create), 3 (network), 8 (remote thread), 11 (file), 12/13 (registry), 22 (DNS) |
+| Normalizacion | UTF-16 a UTF-8, filtrado ASCII, dominios en lowercase |
+| Checkpoint | `.gravity-checkpoint` con escritura atomica (temp + rename) |
+| Envio | HTTP POST con backoff exponencial (1s a 60s), API key header |
+| Requiere | Sysmon instalado + permisos de administrador |
+
+### Agent L1 - Linux/Raspberry Pi (Network Sensor)
+
+| Rol | Descripcion |
+|-----|-------------|
+| Sensor de borde | Tails log DNS (Unbound o formato DNS_ALERT) |
+| Deteccion | Regex para IPv4 e IPv6, tipos A/AAAA/TXT/CNAME/PTR/MX/SRV/HTTPS/ANY |
+| Alertas | Marca `dns_alert` severity=high para dominios maliciosos |
+| Envio | HTTP POST con backoff exponencial, API key header |
+| Requiere | Log DNS accesible (Unbound, Pi-hole, dns-spy) |
+
+### Server L2 (Cerebro Correlador)
+
+| Rol | Descripcion |
+|-----|-------------|
+| Ingesta | Recibe eventos via `/api/v1/events` con API key + MaxBytesReader (1MB) |
+| Persistencia | SQLite WAL con tablas `events` y `correlations` |
+| Correlacion | Empareja `dns_alert` (borde) con `network_dns` (endpoint) por dominio en ventana temporal |
+| Alertas consolidadas | Persiste en tabla `correlations` + webhook opcional |
+| Watchdog | Detecta sensores silenciosos >60s |
+| Retencion | Purga automatica de eventos >N dias (default 30) |
+| Reportes | PDF diario via `/api/v1/reports/daily` |
+| API REST | Stats, correlaciones, eventos recientes para sec-dashboard |
+
+## Correlacion de eventos
+
+El motor de correlacion funciona en dos niveles:
+
+### 1. Tiempo real (en memoria)
+
+```
+1. Pi Zero detecta DNS_ALERT para "botnet-server.ru" (severity=high)
+   -> Se almacena en dnsAlertCache con deadline = now + 10s
+
+2. Windows endpoint hace DNS query a "botnet-server.ru" (Sysmon EventID 22)
+   -> Se busca en dnsAlertCache
+
+3. Match dentro de la ventana de 10s
+   -> ALERTA CONSOLIDADA L2
+   -> Se persiste en tabla correlations
+   -> Se envia webhook si configurado
+```
+
+### 2. Historico (SQL)
+
+La tabla `correlations` guarda todas las alertas consolidadas con:
+- Timestamp
+- Dominio
+- Endpoint host + IP
+- Proceso culpable + GUID
+- Agent ID
+
+Consultable via `/api/v1/correlations` o usada en el reporte PDF diario.
+
+## Puesta en marcha
+
+### Opcion A: Compilacion local (Makefile)
+
 ```bash
-# Entrar a la carpeta Server
+# Compilar todo (server + agent windows + agent linux)
+make all
+
+# Solo servidor
+make server
+
+# Solo agent para Windows
+make agent-windows
+
+# Solo agent para Raspberry Pi (ARM)
+make agent-linux
+```
+
+### Opcion B: Docker (servidor L2)
+
+```bash
+docker build -t gravity-soc-server .
+docker run -d \
+  -p 8443:8443 \
+  -v gravity-data:/app/data \
+  -v gravity-reports:/app/reports \
+  -e GRAVITY_API_KEY=tu-clave-secreta \
+  gravity-soc-server
+```
+
+### Opcion C: Manual
+
+```bash
+# Servidor
 cd gravity-soc-server
-
 go mod tidy
-go build -o gravity-server.exe
+go build -o gravity-server .
 
-# Ejecucion simple (se arranca WebServer)
-# Recibira POSTS en /api/v1/events
-.\gravity-server.exe
+# Agent Windows
+cd gravity-soc-agent
+GOOS=windows GOARCH=amd64 go build -o gravity-agent.exe .
+
+# Agent Linux ARM (Pi Zero 2 W)
+GOOS=linux GOARCH=arm go build -o gravity-agent-linux .
 ```
 
-*Nota: Asegurate de tener `wevtutil` funcional y Microsoft Sysmon correctamente configurado si testea el agente de host en Windows.*
+### Configuracion
 
----
+Copia `.env.example` a `.env` y ajusta:
 
-## 4. Diagrama Rapido del Flujo
+```bash
+# Servidor
+GRAVITY_PORT=:8443
+GRAVITY_API_KEY=tu-clave-secreta
+GRAVITY_RETENTION_DAYS=30
+GRAVITY_WEBHOOK_URL=https://hooks.slack.com/services/XXX
 
-1. **Pi Zero (Tailer.go)** Lee silenciosamente un fichero de log Unbound. Encuentra que alguien solicita `botnet-server.ru`. Como es regex critico, empaqueta a `dns_alert` y lo manda por HTTP al Servidor L2 Pi 5.
-2. **Windows 11 (Sysmon_windows.go)**: En el bucle de wevtutil extrae que Microsoft Edge ha solicitado DNS para `botnet-server.ru` y origino un hilo. Filtra, destruye impurezas y lo empaqueta a `network_dns`. Lo manda al L2 Pi 5.
-3. **Servidor L2 (Pi 5)**: El `correlator` al expirar la ventana SQL (`ABS <= 10 seg`), emparenta el dominio `botnet-server.ru`. Muestra la `source_ip` de Windows y confirma la brecha en un informe limpio PDF.
+# Agente
+GRAVITY_SERVER_URL=http://ip-del-servidor:8443/api/v1/events
+GRAVITY_API_KEY=tu-clave-secreta
+```
 
-## License
+## Ejecutar
 
-MIT License -- see [LICENSE](LICENSE) for details.
+```bash
+# 1. Arrancar servidor L2
+./gravity-server
+
+# 2. Arrancar agent en Windows (como admin)
+./gravity-agent.exe
+
+# 3. Arrancar agent en Raspberry Pi
+GRAVITY_SERVER_URL=http://ip-servidor:8443/api/v1/events ./gravity-agent-linux
+```
+
+## Endpoints API
+
+| Ruta | Metodo | Descripcion |
+|------|--------|-------------|
+| `/api/v1/events` | POST | Ingesta de eventos (agentes L1) |
+| `/api/v1/health` | GET | Health check del servidor |
+| `/api/v1/stats` | GET | Estadisticas diarias + estado de agentes |
+| `/api/v1/correlations` | GET | Correlaciones confirmadas (JSON) |
+| `/api/v1/events/recent` | GET | Ultimos N eventos (default 50) |
+| `/api/v1/reports/daily` | GET | Generar reporte PDF |
+
+Todas las rutas excepto `/health` requieren `X-API-Key` header si `GRAVITY_API_KEY` esta configurada.
+
+## Integracion con sec-dashboard / Splunk
+
+### Polling desde sec-dashboard
+
+```bash
+# Stats del dia
+curl -H "X-API-Key: tu-clave" http://servidor:8443/api/v1/stats
+
+# Correlaciones confirmadas
+curl -H "X-API-Key: tu-clave" http://servidor:8443/api/v1/correlations
+
+# Eventos recientes
+curl -H "X-API-Key: tu-clave" http://servidor:8443/api/v1/events/recent?limit=100
+```
+
+### Webhook a sec-dashboard
+
+```bash
+export GRAVITY_WEBHOOK_URL=https://sec.sammideblas.com/api/ingest
+```
+
+Cada correlacion confirmada enviara un POST JSON con el detalle de la alerta.
+
+### Splunk HEC
+
+Los eventos se pueden reenviar a Splunk desde sec-dashboard o con un script:
+
+```bash
+# Ejemplo: reenviar correlaciones a Splunk
+curl -H "X-API-Key: tu-clave" http://servidor:8443/api/v1/correlations | \
+  curl -H "Authorization: Splunk TOKEN" -d @- https://splunk:8088/services/collector
+```
+
+## Variables de entorno
+
+### Servidor (L2)
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `GRAVITY_PORT` | `:8443` | Puerto de escucha |
+| `GRAVITY_DB_PATH` | `./gravity-soc.db` | Ruta SQLite |
+| `GRAVITY_API_KEY` | (vacio) | API key para auth |
+| `GRAVITY_CORRELATION_WINDOW` | `10s` | Ventana de correlacion |
+| `GRAVITY_RETENTION_DAYS` | `30` | Dias de retencion |
+| `GRAVITY_WEBHOOK_URL` | (vacio) | Webhook para alertas |
+
+### Agente (L1)
+
+| Variable | Default | Descripcion |
+|----------|---------|-------------|
+| `GRAVITY_SERVER_URL` | `http://127.0.0.1:8443/api/v1/events` | URL del servidor L2 |
+| `GRAVITY_API_KEY` | (vacio) | API key (debe coincidir) |
+| `GRAVITY_LOG_PATH` | `/var/log/soc_alerts.log` | Log DNS (Linux) |
+
+## Requisitos
+
+- Go >= 1.22
+- Windows: Sysmon instalado + permisos admin
+- Linux: log DNS accesible (Unbound, Pi-hole, dns-spy)
+- Raspberry Pi Zero 2 W: ARMv6 (GOARCH=arm)
+- Raspberry Pi 5: ARM64 (GOARCH=arm64)
+
+## Licencia
+
+MIT -- ver [LICENSE](LICENSE).

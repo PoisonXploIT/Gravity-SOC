@@ -1,6 +1,6 @@
 module gravity-soc-agent
 
-go 1.26.1
+go 1.22
 
 require github.com/nxadm/tail v1.4.11
 

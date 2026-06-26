@@ -13,23 +13,43 @@ import (
 
 func main() {
 	log.Println("===============================================")
-	log.Println("⚡ GRAVITY SOC SERVER ⚡ (Cerebro L2 - Pi 5)")
+	log.Println("GRAVITY SOC SERVER (Cerebro L2)")
 	log.Println("===============================================")
 
-	// 1. Inicializar la base de datos persistente optimizada (WAL)
-	db.InitDB("./gravity-soc.db")
+	// 1. Inicializar base de datos (WAL)
+	dbPath := os.Getenv("GRAVITY_DB_PATH")
+	if dbPath == "" {
+		dbPath = "./gravity-soc.db"
+	}
+	db.InitDB(dbPath)
 
-	// 2. Iniciar el basurero del caché de correlación
+	// 2. Iniciar limpieza del cache de correlacion
 	go correlator.CleanupCache()
 
-	// 2.b Iniciar el perro guardián de sensores (Heartbeat Watchdog)
+	// 3. Watchdog de sensores (heartbeat)
 	go correlator.StartWatchdog()
 
-	// 3. Levantar Endpoint de Ingesta (API)
-	// Escuchamos en *:8443 (usaremos HTTP por ahora localmente, en prod HTTPS)
-	go api.StartServer(":8443")
+	// 4. Retencion nocturna de eventos
+	go correlator.StartRetentionJob()
 
-	// Mantener vivo hasta recibir señal de apagado
+	// 5. Puerto configurable (default :8443)
+	port := os.Getenv("GRAVITY_PORT")
+	if port == "" {
+		port = ":8443"
+	}
+
+	// 6. Levantar API
+	go api.StartServer(port)
+
+	// Mostrar configuracion
+	apiKey := os.Getenv("GRAVITY_API_KEY")
+	webhookURL := os.Getenv("GRAVITY_WEBHOOK_URL")
+	log.Printf("[CONFIG] Puerto: %s", port)
+	log.Printf("[CONFIG] API Key: %v", apiKey != "")
+	log.Printf("[CONFIG] Webhook: %v", webhookURL != "")
+	log.Printf("[CONFIG] Endpoints: /api/v1/events | /api/v1/stats | /api/v1/correlations | /api/v1/events/recent | /api/v1/health")
+
+	// Mantener vivo hasta señal de apagado
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
