@@ -256,3 +256,10 @@ curl -H "X-API-Key: tu-clave" http://servidor:8443/api/v1/correlations | \
 ## Licencia
 
 MIT -- ver [LICENSE](LICENSE).
+
+---
+
+## Contacto
+
+- Pagina: [sammideblas.com](https://sammideblas.com)
+- Email: analista@sammideblas.com
